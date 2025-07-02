@@ -60,6 +60,7 @@ const (
 	SourceUnsafeInline  = "'unsafe-inline'"
 	SourceUnsafeEval    = "'unsafe-eval'"
 	SourceNone          = "'none'"
+	SourceNonce         = noncePlaceholder
 	SourceStrictDynamic = "'strict-dynamic'"
 	SourceReportSample  = "'report-sample'"
 	SourceUnsafeHashes  = "'unsafe-hashes'" // CSP3
@@ -73,51 +74,74 @@ const (
 	SchemeMedia = "mediastream:"
 )
 
+// noncePlaceholder is the internal text that will be replaced by the actual nonce value.
+const noncePlaceholder = "{{nonce}}"
+
 // valuelessDirectives is a set of CSP directives that are valid without any value.
 var valuelessDirectives = map[string]struct{}{
 	BlockAllMixedContent:    {},
 	UpgradeInsecureRequests: {},
-	Sandbox:                 {}, // Can be used with or without values.
+	Sandbox:                 {}, // Can be used with or without values
 }
 
-// Nonce returns a correctly formatted nonce source string.
-// Example: 'nonce-R4nd0m'
+// Nonce returns a correctly formatted nonce source string for a static nonce value.
+// This function is idempotent; if the provided string is already a valid nonce
+// source, it is returned as-is after trimming whitespace.
 func Nonce(nonce string) string {
-	return "'nonce-" + nonce + "'"
+	nonceValue := strings.TrimPrefix(strings.Trim(strings.TrimSpace(nonce), "'"), "nonce-")
+	return "'nonce-" + nonceValue + "'"
 }
 
 // Hash returns a correctly formatted hash source string.
-// Example: 'sha256-Abc123=='
-func Hash(algo, base64Value string) string {
-	return "'" + algo + "-" + base64Value + "'"
+// This function is idempotent; if the provided value is already a valid hash
+// source for the given algorithm, it is returned as-is after trimming whitespace.
+func Hash(algo string, base64Value string) string {
+	hashValue := strings.Trim(strings.TrimSpace(base64Value), "'")
+
+	// Check if the hash value already looks like a hash
+	if dashIndex := strings.Index(hashValue, "-"); dashIndex > 0 {
+		potentialAlgo := hashValue[:dashIndex]
+		if strings.HasPrefix(potentialAlgo, "sha") {
+			hashValue = hashValue[dashIndex+1:]
+		}
+	}
+
+	return "'" + algo + "-" + hashValue + "'"
 }
 
 // Policy represents a Content Security Policy. It provides a thread-safe
-// way to define and compile CSP headers.
+// way to define and compile CSP headers, with support for lazy compilation
+// and per-request nonce injection.
 type Policy struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	directives map[string]map[string]struct{} // Using a map for sources ensures automatic deduplication.
+	cache      string                         // Cached policy string with placeholders.
+	isCompiled bool                           // Flag indicating if the policy has been compiled.
+	needsNonce bool                           // Flag indicating if the compiled policy has a nonce placeholder.
 }
 
 // New creates and returns a new, empty Policy.
 func New() *Policy {
-	return &Policy{
-		directives: make(map[string]map[string]struct{}),
-	}
+	return &Policy{directives: make(map[string]map[string]struct{})}
 }
 
 // Add appends one or more sources to a given directive.
 // For valueless directives (e.g., "sandbox"), provide no sources.
 // Calling Add with no sources for a non-valueless directive has no effect.
+// Any modification to the policy will cause the compiled version to be regenerated
+// on the next call to Compile.
 func (p *Policy) Add(directive string, sources ...string) {
 	key := strings.ToLower(strings.TrimSpace(directive))
 	if key == "" {
 		return
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	var validSources []string
 	if len(sources) > 0 {
-		// Filter out empty sources before locking.
+		// Filter out empty sources before locking
 		validSources = make([]string, 0, len(sources))
 		for _, source := range sources {
 			s := strings.TrimSpace(source)
@@ -125,19 +149,16 @@ func (p *Policy) Add(directive string, sources ...string) {
 				validSources = append(validSources, s)
 			}
 		}
-		// If all provided sources were empty, do nothing.
+		// If all provided sources were empty, do nothing
 		if len(validSources) == 0 {
 			return
 		}
 	} else {
-		// No sources provided. Only proceed if it's a known valueless directive.
+		// No sources provided. Only proceed if it's a known valueless directive
 		if _, isValueless := valuelessDirectives[key]; !isValueless {
 			return
 		}
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	if _, ok := p.directives[key]; !ok {
 		p.directives[key] = make(map[string]struct{})
@@ -146,6 +167,8 @@ func (p *Policy) Add(directive string, sources ...string) {
 	for _, s := range validSources {
 		p.directives[key][s] = struct{}{}
 	}
+
+	p.invalidateCache()
 }
 
 // Set replaces any existing sources for a given directive with the new ones.
@@ -153,11 +176,17 @@ func (p *Policy) Add(directive string, sources ...string) {
 // will remove the directive from the policy.
 // For valueless directives (e.g., "sandbox"), providing no sources sets the
 // directive without any value.
+// Any modification to the policy will cause the compiled version to be regenerated
+// on the next call to Compile.
 func (p *Policy) Set(directive string, sources ...string) {
 	key := strings.ToLower(strings.TrimSpace(directive))
 	if key == "" {
 		return
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	defer p.invalidateCache()
 
 	newSources := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
@@ -166,9 +195,6 @@ func (p *Policy) Set(directive string, sources ...string) {
 			newSources[s] = struct{}{}
 		}
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	// If no valid sources are provided, check if the directive can be valueless
 	if len(newSources) == 0 {
@@ -184,25 +210,58 @@ func (p *Policy) Set(directive string, sources ...string) {
 }
 
 // Remove removes a directive entirely from the policy.
+// Any modification to the policy will cause the compiled version to be regenerated
+// on the next call to Compile.
 func (p *Policy) Remove(directive string) {
 	key := strings.ToLower(strings.TrimSpace(directive))
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.directives, key)
+
+	if _, ok := p.directives[key]; ok {
+		delete(p.directives, key)
+		p.invalidateCache()
+	}
 }
 
 // Compile generates the CSP header string from the policy.
 // The directives are sorted alphabetically for a consistent, testable output.
 // The sources within each directive are also sorted.
-func (p *Policy) Compile() string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+// The first call to Compile will build and cache the policy string. Subsequent
+// calls are highly optimized. If a nonce is required, it will be injected.
+func (p *Policy) Compile(nonce ...string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	if len(p.directives) == 0 {
-		return ""
+	// Lazy compilation: if the cache is invalid, build it
+	if !p.isCompiled {
+		p.buildCacheUnsafe()
 	}
 
-	// Sort directives for consistent output.
+	// If no nonce is required, return the cached policy
+	if !p.needsNonce {
+		return p.cache
+	}
+
+	// If a nonce is required by the policy and one was provided, inject it
+	nonceValue := SourceNonce
+	if len(nonce) > 0 && nonce[0] != "" {
+		nonceValue = nonce[0]
+	}
+	return strings.ReplaceAll(p.cache, SourceNonce, Nonce(nonceValue))
+}
+
+// buildCacheUnsafe constructs the policy string and caches it.
+// It assumes the caller holds the mutex.
+func (p *Policy) buildCacheUnsafe() {
+	defer func() { p.isCompiled = true }()
+
+	if len(p.directives) == 0 {
+		p.cache = ""
+		p.needsNonce = false
+		return
+	}
+
 	directiveKeys := make([]string, 0, len(p.directives))
 	for k := range p.directives {
 		directiveKeys = append(directiveKeys, k)
@@ -210,6 +269,7 @@ func (p *Policy) Compile() string {
 	sort.Strings(directiveKeys)
 
 	var b strings.Builder
+	var hasNonce bool
 	for i, key := range directiveKeys {
 		if i > 0 {
 			b.WriteString("; ")
@@ -217,17 +277,35 @@ func (p *Policy) Compile() string {
 		b.WriteString(key)
 
 		sourcesMap := p.directives[key]
-		if len(sourcesMap) > 0 {
-			// Sort sources for consistent output.
-			sourceKeys := make([]string, 0, len(sourcesMap))
-			for s := range sourcesMap {
-				sourceKeys = append(sourceKeys, s)
-			}
-			sort.Strings(sourceKeys)
+		if len(sourcesMap) == 0 {
+			continue
+		}
 
-			b.WriteByte(' ')
-			b.WriteString(strings.Join(sourceKeys, " "))
+		b.WriteByte(' ')
+		sourceKeys := make([]string, 0, len(sourcesMap))
+		for s := range sourcesMap {
+			sourceKeys = append(sourceKeys, s)
+		}
+		sort.Strings(sourceKeys)
+
+		for j, s := range sourceKeys {
+			if j > 0 {
+				b.WriteByte(' ')
+			}
+
+			hasNonce = hasNonce || s == SourceNonce
+			b.WriteString(s)
 		}
 	}
-	return b.String()
+
+	p.cache = b.String()
+	p.needsNonce = hasNonce
+}
+
+// invalidateCache clears the compiled policy, forcing a rebuild on the next Compile call.
+// This must be called by any method that modifies the directives.
+func (p *Policy) invalidateCache() {
+	p.isCompiled = false
+	p.cache = ""
+	p.needsNonce = false
 }

@@ -11,16 +11,17 @@ This package provides a comprehensive and easy-to-use API for dynamically creati
 - **Fluent API:** An expressive and easy-to-use interface for building complex policies.
 - **Thread-Safe:** Designed from the ground up for safe concurrent access and modification.
 - **Correct & Consistent:** Automatically sorts directives and sources to produce a consistent, canonical header string every time.
+- **Dynamic Nonce Injection:** Simple per-request nonce injection for the highest level of script security.
 - **Comprehensive:** Includes constants for all standard CSP directives and keyword sources to prevent typos.
 - **Helper Functions:** Simple helpers for generating correctly formatted `nonce` and `hash` sources.
 - **Zero Dependencies:** A lightweight package that integrates into any project without external dependencies.
-- **High Performance:** Uses efficient string building and map lookups to minimize allocations and CPU overhead.
+- **High Performance:** Uses efficient string building and lazy compilation to minimize allocations and CPU overhead on repeated calls.
 
 ## 🚀 Usage
 
 ### Basic Setup
 
-Creating a policy is simple. Start with `New()` and use the `Add` method to include directives.
+Creating a policy is simple. Start with `New()` and use the `Add` or `Set` methods to build your policy.
 
 ```go
 import "[github.com/balinomad/go-csp](https://github.com/balinomad/go-csp)"
@@ -38,7 +39,7 @@ header := p.Compile()
 
 ### Building a Complex Policy
 
-Easily build a robust policy by adding multiple directives and sources. The package handles deduplication and sorting automatically.
+Easily build a robust policy by chaining methods. The package handles deduplication and sorting automatically.
 
 ```go
 p := csp.New()
@@ -46,10 +47,8 @@ p := csp.New()
 // Set a default policy
 p.Set(csp.DefaultSrc, csp.SourceSelf)
 
-// Add sources for scripts
+// Add sources for scripts and styles
 p.Add(csp.ScriptSrc, csp.SourceSelf, "[https://cdn.example.com](https://cdn.example.com)", "[https://apis.google.com](https://apis.google.com)")
-
-// Add sources for styles
 p.Add(csp.StyleSrc, csp.SourceSelf, "[https://fonts.googleapis.com](https://fonts.googleapis.com)")
 
 // Add a valueless directive
@@ -59,24 +58,42 @@ p.Add(csp.UpgradeInsecureRequests)
 // -> "default-src 'self'; script-src 'self' [https://apis.google.com](https://apis.google.com) [https://cdn.example.com](https://cdn.example.com); style-src 'self' [https://fonts.googleapis.com](https://fonts.googleapis.com); upgrade-insecure-requests"
 header := p.Compile()
 ```
+### Dynamic Nonces
 
-### Using Nonce and Hash Helpers
+For maximum security, a unique nonce should be generated for each request. This library makes it easy to inject a nonce at compile time.
 
-The `Nonce` and `Hash` helpers ensure your sources are formatted correctly according to the CSP specification.
+First, add the `SourceNonce` placeholder to your policy during setup.
 
 ```go
+// Do this once during application startup
 p := csp.New()
+p.Add(csp.ScriptSrc, csp.SourceSelf, csp.SourceNonce)
+```
 
-// Add a nonce and a hash to the script-src directive
-p.Add(
-    csp.ScriptSrc,
-    csp.SourceSelf,
-    csp.Nonce("random-nonce-value"),
-    csp.Hash("sha256", "some-base64-encoded-hash"),
+Then, in your HTTP handler, generate a random value and pass it to `Compile`.
+
+```go
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "io"
+    "net/http"
 )
 
-// -> "script-src 'self' 'nonce-random-nonce-value' 'sha256-some-base64-encoded-hash'"
-header := p.Compile()
+// Assume 'p' is your shared csp.Policy instance from setup.
+func MyHandler(w http.ResponseWriter, r *http.Request) {
+    // 1. Generate a new random nonce for each request.
+    nonceBytes := make([]byte, 16)
+    io.ReadFull(rand.Reader, nonceBytes)
+    nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+
+    // 2. Compile the policy, injecting the per-request nonce.
+    header := p.Compile(nonce)
+    w.Header().Set("Content-Security-Policy", header)
+
+    // 3. Use the same nonce in your HTML script tags.
+    // ... render your template with <script nonce="{{.CSPNonce}}">
+}
 ```
 
 ### Modifying a Policy
@@ -120,13 +137,13 @@ go get github.com/balinomad/go-csp@latest
 | `Add(directive, sources...)` | Appends one or more sources to a directive. Automatically handles duplicates. |
 | `Set(directive, sources...)` | Replaces all sources for a directive. Removes the directive if no sources are provided. |
 | `Remove(directive)` | Removes a directive entirely from the policy. |
-| `Compile()` | Generates the final, sorted CSP header string. |
+| `Compile(nonce ...string)` | Generates the final, sorted CSP header string. If a nonce is passed, it replaces the `SourceNonce` placeholder. |
 
 ### Helpers
 
 | Function | Description |
 |----------|-------------|
-| `Nonce(value)` | Returns a correctly formatted nonce source (e.g., `'nonce-value'`). |
+| `Nonce(value)` | Returns a correctly formatted static nonce source (e.g., `'nonce-value'`). |
 | `Hash(algo, value)` | Returns a correctly formatted hash source (e.g., `'sha256-value'`). |
 
 ### Constants
