@@ -1,6 +1,12 @@
+[![GoDoc](https://pkg.go.dev/badge/github.com/balinomad/go-csp?status.svg)](https://pkg.go.dev/github.com/balinomad/go-csp?tab=doc)
+[![GoMod](https://img.shields.io/github/go-mod/go-version/balinomad/go-csp)](https://github.com/balinomad/go-csp)
+[![Size](https://img.shields.io/github/languages/code-size/balinomad/go-csp)](https://github.com/balinomad/go-csp)
+[![License](https://img.shields.io/github/license/balinomad/go-csp)](./LICENSE)
 [![Go](https://github.com/balinomad/go-csp/actions/workflows/go.yml/badge.svg)](https://github.com/balinomad/go-csp/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-csp)](https://goreportcard.com/report/github.com/balinomad/go-csp)
+[![codecov](https://codecov.io/github/balinomad/go-csp/graph/badge.svg?token=L1K68IIN51)](https://codecov.io/github/balinomad/go-csp)
 
-# go-csp
+# csp
 
 *A secure, fluent, and thread-safe builder for Content Security Policies (CSP) in Go.*
 
@@ -17,6 +23,12 @@ This package provides a comprehensive and easy-to-use API for dynamically creati
 - **Zero Dependencies:** A lightweight package that integrates into any project without external dependencies.
 - **High Performance:** Uses efficient string building and lazy compilation to minimize allocations and CPU overhead on repeated calls.
 
+## 📌 Installation
+
+```bash
+go get github.com/balinomad/go-csp@latest
+```
+
 ## 🚀 Usage
 
 ### Basic Setup
@@ -24,7 +36,7 @@ This package provides a comprehensive and easy-to-use API for dynamically creati
 Creating a policy is simple. Start with `New()` and use the `Add` or `Set` methods to build your policy.
 
 ```go
-import "[github.com/balinomad/go-csp](https://github.com/balinomad/go-csp)"
+import "github.com/balinomad/go-csp"
 
 // Create a new, empty policy
 p := csp.New()
@@ -114,12 +126,6 @@ p.Remove(csp.DefaultSrc)
 
 // -> "script-src 'self' [https://b.com](https://b.com)"
 header := p.Compile()
-```
-
-## 📌 Installation
-
-```bash
-go get github.com/balinomad/go-csp@latest
 ```
 
 ## 📘 API Reference
