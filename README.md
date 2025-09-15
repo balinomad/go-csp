@@ -160,6 +160,18 @@ The package provides string constants for all standard directives (e.g., `csp.De
 
 The `Policy` object is thread-safe. You can safely call its methods (`Add`, `Set`, `Remove`, `Compile`) from multiple goroutines simultaneously. This makes it ideal for use in HTTP middleware or other concurrent contexts where a single policy object might be shared and modified. All access is synchronized internally with a `sync.RWMutex`.
 
+## 🧪 Testing
+
+Run tests with:
+```bash
+go test -v
+```
+
+Run benchmarks with:
+```bash
+go test -bench=. -benchmem
+```
+
 ## ⚖️ License
 
 This package is open-source and available under the [MIT License](LICENSE).
