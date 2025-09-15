@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// TestPolicy_New verifies that the New function returns a valid Policy
+// object with an empty directives map.
 func TestPolicy_New(t *testing.T) {
 	p := New()
 	if p == nil {
@@ -20,6 +22,9 @@ func TestPolicy_New(t *testing.T) {
 	}
 }
 
+// TestPolicy_Add tests the Add method of the Policy object.
+// It verifies that the Add method correctly adds sources to directives,
+// handles duplicate sources, and handles valueless directives.
 func TestPolicy_Add(t *testing.T) {
 	t.Run("Add to new directive", func(t *testing.T) {
 		p := New()
@@ -81,6 +86,9 @@ func TestPolicy_Add(t *testing.T) {
 	})
 }
 
+// TestPolicy_Set verifies that the Set method of the Policy object
+// correctly replaces the sources for a directive, removes the directive
+// if no valid sources are provided, and handles valueless directives.
 func TestPolicy_Set(t *testing.T) {
 	t.Run("Set with valid sources", func(t *testing.T) {
 		p := New()
@@ -122,6 +130,10 @@ func TestPolicy_Set(t *testing.T) {
 	})
 }
 
+// TestPolicy_Remove verifies that the Remove method of the Policy object
+// correctly removes a directive from the policy if it exists.
+// It also verifies that the Remove method does not panic if the directive
+// does not exist.
 func TestPolicy_Remove(t *testing.T) {
 	p := New()
 	p.Add(DefaultSrc, SourceSelf)
@@ -136,6 +148,11 @@ func TestPolicy_Remove(t *testing.T) {
 	}
 }
 
+// TestPolicy_Compile tests the Compile method of the Policy object.
+// It verifies that the Compile method correctly generates the CSP header string
+// from the policy, sorts the directives alphabetically, and sorts the sources
+// alphabetically within each directive. It also verifies that the Compile
+// method handles valueless directives and nonces correctly.
 func TestPolicy_Compile(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -206,6 +223,10 @@ func TestPolicy_Compile(t *testing.T) {
 	}
 }
 
+// TestPolicy_CacheInvalidation tests that modifications to the policy object
+// correctly invalidate the internal cache of the compiled policy string. This
+// includes adding a new directive, setting an existing directive, and removing
+// an existing directive.
 func TestPolicy_CacheInvalidation(t *testing.T) {
 	t.Run("Add invalidates cache", func(t *testing.T) {
 		p := New()
@@ -247,6 +268,8 @@ func TestPolicy_CacheInvalidation(t *testing.T) {
 	})
 }
 
+// TestPolicy_Compile_NonceLogic tests the logic of the Compile method
+// for nonce injection.
 func TestPolicy_Compile_NonceLogic(t *testing.T) {
 	testNonceValue := "r4nd0m-v4lu3"
 
@@ -325,6 +348,11 @@ func TestPolicy_Compile_NonceLogic(t *testing.T) {
 	}
 }
 
+// TestPolicy_LazyCompilation tests the lazy compilation of the Policy object.
+// It verifies that the first call to Compile will build and cache the policy
+// string, and that subsequent calls will use the cached value until the policy
+// is modified. It also verifies that modifying the policy will invalidate the
+// cache, and that re-compiling the policy will generate a new cached value.
 func TestPolicy_LazyCompilation(t *testing.T) {
 	p := New()
 	p.Add(DefaultSrc, SourceSelf)
@@ -359,6 +387,9 @@ func TestPolicy_LazyCompilation(t *testing.T) {
 	}
 }
 
+// TestPolicy_Concurrency tests the thread safety of the Policy object.
+// It verifies that multiple concurrent writes and reads will not cause race
+// conditions or data corruption.
 func TestPolicy_Concurrency(t *testing.T) {
 	p := New()
 	var wg sync.WaitGroup
@@ -400,31 +431,7 @@ func TestPolicy_Concurrency(t *testing.T) {
 	}
 }
 
-func BenchmarkPolicy_Compile(b *testing.B) {
-	p := New()
-	p.Add(DefaultSrc, SourceSelf)
-	p.Add(ScriptSrc, SourceSelf, SourceNonce, "https://cdn.example.com", "https://apis.example.com")
-	p.Add(StyleSrc, SourceSelf, "https://fonts.example.com")
-	p.Add(FontSrc, "https://fonts.example.com")
-	p.Add(ImgSrc, SourceSelf, SchemeData)
-	p.Add(FrameAncestors, SourceNone)
-	p.Add(UpgradeInsecureRequests)
-
-	// The first compile is expensive as it builds the cache.
-	p.Compile("first-nonce")
-
-	nonce := "B3nh1LfcP7/T8aR4y1a+5A=="
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_ = p.Compile(nonce)
-	}
-}
-
-// Add these new test functions to csp_test.go
-
+// TestHelpers tests the correctness of the Nonce and Hash helper functions.
 func TestHelpers(t *testing.T) {
 	t.Run("Nonce", func(t *testing.T) {
 		testCases := []struct {
@@ -459,7 +466,6 @@ func TestHelpers(t *testing.T) {
 			{"With spaces", "sha384", "  xyz  ", "'sha384-xyz'"},
 			{"Already quoted", "sha256", "'sha256-abc'", "'sha256-abc'"},
 			{"Already quoted with spaces", "sha512", "  'sha512-abc'  ", "'sha512-abc'"},
-			// Tests that the function correctly re-formats a value that looks like a hash of a different algo
 			{"Idempotent check mismatch", "sha256", "'sha384-abc'", "'sha256-abc'"},
 		}
 
@@ -473,6 +479,9 @@ func TestHelpers(t *testing.T) {
 	})
 }
 
+// TestPolicy_Set_ValuelessDirective verifies that the Set method of the Policy object
+// correctly sets a valueless directive without any value when called with no arguments.
+// It also verifies that the compiled policy string is updated correctly.
 func TestPolicy_Set_ValuelessDirective(t *testing.T) {
 	p := New()
 	p.Add(Sandbox, "allow-forms") // Start with a value
@@ -488,6 +497,9 @@ func TestPolicy_Set_ValuelessDirective(t *testing.T) {
 	}
 }
 
+// TestPolicy_EdgeCases tests the edge cases of the Policy object.
+// It verifies that adding an empty directive does not modify the policy,
+// and that removing a non-existent directive does not invalidate the cache.
 func TestPolicy_EdgeCases(t *testing.T) {
 	t.Run("Add with empty directive", func(t *testing.T) {
 		p := New()
@@ -514,4 +526,33 @@ func TestPolicy_EdgeCases(t *testing.T) {
 			t.Error("Cache should not be invalidated when removing a non-existent directive")
 		}
 	})
+}
+
+// --- Benchmarks ---
+
+// BenchmarkPolicy_Compile benchmarks the Compile method of the Policy object.
+// It tests the performance of compiling a policy with a single nonce value.
+// The benchmark is run with the allocations reporter enabled to provide insight
+// into the performance cost of the cache.
+func BenchmarkPolicy_Compile(b *testing.B) {
+	p := New()
+	p.Add(DefaultSrc, SourceSelf)
+	p.Add(ScriptSrc, SourceSelf, SourceNonce, "https://cdn.example.com", "https://apis.example.com")
+	p.Add(StyleSrc, SourceSelf, "https://fonts.example.com")
+	p.Add(FontSrc, "https://fonts.example.com")
+	p.Add(ImgSrc, SourceSelf, SchemeData)
+	p.Add(FrameAncestors, SourceNone)
+	p.Add(UpgradeInsecureRequests)
+
+	// The first compile is expensive as it builds the cache.
+	p.Compile("first-nonce")
+
+	nonce := "B3nh1LfcP7/T8aR4y1a+5A=="
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = p.Compile(nonce)
+	}
 }
