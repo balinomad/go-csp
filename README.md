@@ -8,170 +8,242 @@
 
 # csp
 
-*A secure, fluent, and thread-safe builder for Content Security Policies (CSP) in Go.*
+_A secure, fluent, and thread-safe builder for Content Security Policies (CSP) in Go._
 
-This package provides a comprehensive and easy-to-use API for dynamically creating and managing Content Security Policies. It's designed to be efficient, correct, and safe for concurrent use in high-performance web applications and middleware.
+This package provides a comprehensive API for dynamically creating and managing Content Security Policies. It is designed to be correct, allocation-efficient, and safe for concurrent use in high-throughput web servers and middleware.
 
-## ✨ Features
+## Features
 
-- **Fluent API:** An expressive and easy-to-use interface for building complex policies.
-- **Thread-Safe:** Designed from the ground up for safe concurrent access and modification.
-- **Correct & Consistent:** Automatically sorts directives and sources to produce a consistent, canonical header string every time.
-- **Dynamic Nonce Injection:** Simple per-request nonce injection for the highest level of script security.
-- **Comprehensive:** Includes constants for all standard CSP directives and keyword sources to prevent typos.
-- **Helper Functions:** Simple helpers for generating correctly formatted `nonce` and `hash` sources.
-- **Zero Dependencies:** A lightweight package that integrates into any project without external dependencies.
-- **High Performance:** Uses efficient string building and lazy compilation to minimize allocations and CPU overhead on repeated calls.
+- **Fluent API:** Expressive interface for building and mutating complex policies.
+- **Thread-Safe:** Designed for concurrent access using `sync.RWMutex`.
+- **Canonical Output:** Automatically deduplicates and sorts directives and sources to produce consistent header strings.
+- **Dynamic Nonce Injection:** Supports per-request nonce injection coupled with lazy string compilation to minimize allocation overhead.
+- **Strict Validation:** Validates schemes, wildcards, and cryptographic hash formats to prevent malformed headers.
+- **Zero Dependencies:** A lightweight, standard-library-only package.
 
-## 📌 Installation
+## Installation
 
 ```bash
 go get github.com/balinomad/go-csp@latest
 ```
 
-## 🚀 Usage
+## Usage
 
-### Basic Setup
+### Middleware Integration (net/http)
 
-Creating a policy is simple. Start with `New()` and use the `Add` or `Set` methods to build your policy.
-
-```go
-import "github.com/balinomad/go-csp"
-
-// Create a new, empty policy
-p := csp.New()
-
-// Add a simple directive
-// -> "default-src 'self'"
-p.Add(csp.DefaultSrc, csp.SourceSelf)
-
-// The Compile method generates the final header string
-header := p.Compile()
-```
-
-### Building a Complex Policy
-
-Easily build a robust policy by chaining methods. The package handles deduplication and sorting automatically.
+`go-csp` is designed to be initialized once at application startup and shared safely across concurrent HTTP handlers.
 
 ```go
-p := csp.New()
+package main
 
-// Set a default policy
-p.Set(csp.DefaultSrc, csp.SourceSelf)
-
-// Add sources for scripts and styles
-p.Add(csp.ScriptSrc, csp.SourceSelf, "[https://cdn.example.com](https://cdn.example.com)", "[https://apis.google.com](https://apis.google.com)")
-p.Add(csp.StyleSrc, csp.SourceSelf, "[https://fonts.googleapis.com](https://fonts.googleapis.com)")
-
-// Add a valueless directive
-p.Add(csp.UpgradeInsecureRequests)
-
-// Compile the policy
-// -> "default-src 'self'; script-src 'self' [https://apis.google.com](https://apis.google.com) [https://cdn.example.com](https://cdn.example.com); style-src 'self' [https://fonts.googleapis.com](https://fonts.googleapis.com); upgrade-insecure-requests"
-header := p.Compile()
-```
-### Dynamic Nonces
-
-For maximum security, a unique nonce should be generated for each request. This library makes it easy to inject a nonce at compile time.
-
-First, add the `SourceNonce` placeholder to your policy during setup.
-
-```go
-// Do this once during application startup
-p := csp.New()
-p.Add(csp.ScriptSrc, csp.SourceSelf, csp.SourceNonce)
-```
-
-Then, in your HTTP handler, generate a random value and pass it to `Compile`.
-
-```go
 import (
-    "crypto/rand"
-    "encoding/base64"
-    "io"
-    "net/http"
+	"crypto/rand"
+	"encoding/base64"
+	"io"
+	"net/http"
+
+	"github.com/balinomad/go-csp"
 )
 
-// Assume 'p' is your shared csp.Policy instance from setup.
-func MyHandler(w http.ResponseWriter, r *http.Request) {
-    // 1. Generate a new random nonce for each request.
-    nonceBytes := make([]byte, 16)
-    io.ReadFull(rand.Reader, nonceBytes)
-    nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+// CSPMiddleware wraps an HTTP handler, injecting a secure, per-request CSP header.
+func CSPMiddleware(policy *csp.Policy) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Generate a cryptographically secure random nonce for the request
+			nonceBytes := make([]byte, 16)
+			if _, err := io.ReadFull(rand.Reader, nonceBytes); err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			nonce := base64.StdEncoding.EncodeToString(nonceBytes)
 
-    // 2. Compile the policy, injecting the per-request nonce.
-    header := p.Compile(nonce)
-    w.Header().Set("Content-Security-Policy", header)
+			// Compile the policy, injecting the generated nonce, and set the header
+			w.Header().Set("Content-Security-Policy", policy.Compile(nonce))
 
-    // 3. Use the same nonce in your HTML script tags.
-    // ... render your template with <script nonce="{{.CSPNonce}}">
+			// Typically, you would also inject this nonce into the request context
+			// here so it can be accessed by your HTML template rendering engine.
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func main() {
+	// Initialize the global policy
+	p := csp.New()
+	p.Add(csp.DefaultSrc, csp.SourceSelf)
+	p.Add(csp.ScriptSrc, csp.SourceSelf, csp.SourceNonce)
+	p.Add(csp.StyleSrc, csp.SourceSelf, "https://fonts.googleapis.com")
+	p.Add(csp.UpgradeInsecureRequests)
+
+	// Validate the policy configuration before starting the server
+	if err := p.Strict(); err != nil {
+		panic("invalid CSP configuration: " + err.Error())
+	}
+
+	// Set up routing
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<h1>Secure Page</h1>"))
+	})
+
+	// Wrap the multiplexer with the CSP middleware
+	handler := CSPMiddleware(p)(mux)
+
+	http.ListenAndServe(":8080", handler)
 }
 ```
 
-### Modifying a Policy
+### Third-Party Router Integration
 
-You can easily modify or remove directives from an existing policy.
+Because `go-csp` is framework-agnostic, it integrates seamlessly with popular Go web frameworks.
+
+#### Chi (or any standard net/http router)
+
+Chi utilizes standard `net/http` middleware signatures, so the standard `CSPMiddleware` defined above works without modification.
 
 ```go
-// Start with an existing policy
-p := csp.New()
-p.Add(csp.DefaultSrc, csp.SourceSelf)
-p.Add(csp.ScriptSrc, "[https://a.com](https://a.com)")
-
-// Overwrite the script-src directive completely
-p.Set(csp.ScriptSrc, csp.SourceSelf, "[https://b.com](https://b.com)")
-
-// Remove the default-src directive
-p.Remove(csp.DefaultSrc)
-
-// -> "script-src 'self' [https://b.com](https://b.com)"
-header := p.Compile()
+r := chi.NewRouter()
+r.Use(CSPMiddleware(p))
+r.Get("/", myHandler)
 ```
 
-## 📘 API Reference
+#### Gin
+
+Gin uses a custom signature (`gin.HandlerFunc`). Wrap the policy compilation inside Gin's context.
+
+```go
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"io"
+
+	"github.com/balinomad/go-csp"
+	"github.com/gin-gonic/gin"
+)
+
+func CSPGinMiddleware(policy *csp.Policy) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		nonceBytes := make([]byte, 16)
+		io.ReadFull(rand.Reader, nonceBytes)
+		nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+
+		c.Header("Content-Security-Policy", policy.Compile(nonce))
+		c.Set("CSPNonce", nonce) // Pass to context for template rendering
+
+		c.Next()
+	}
+}
+
+// Usage:
+// r := gin.Default()
+// r.Use(CSPGinMiddleware(p))
+```
+
+### Echo
+
+Integration with Echo requires the `echo.MiddlewareFunc` signature.
+
+```go
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"io"
+
+	"github.com/balinomad/go-csp"
+	"github.com/labstack/echo/v4"
+)
+
+func CSPEchoMiddleware(policy *csp.Policy) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			nonceBytes := make([]byte, 16)
+			io.ReadFull(rand.Reader, nonceBytes)
+			nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+
+			c.Response().Header().Set("Content-Security-Policy", policy.Compile(nonce))
+			c.Set("CSPNonce", nonce) // Pass to context for template rendering
+
+			return next(c)
+		}
+	}
+}
+
+// Usage:
+// e := echo.New()
+// e.Use(CSPEchoMiddleware(p))
+```
+
+### Modifying Policies Dynamically
+
+The `Policy` object supports real-time modification or cloning for specific routes.
+
+```go
+// Overwrite a directive completely
+p.Set(csp.ScriptSrc, csp.SourceSelf, "https://analytics.example.com")
+
+// Remove a directive entirely
+p.Remove(csp.DefaultSrc)
+
+// Create an isolated copy for a specific handler that requires altered rules
+clonedPolicy := p.Clone()
+clonedPolicy.Add(csp.FrameAncestors, "https://trusted-partner.com")
+```
+
+## API Reference
 
 ### Constructor
 
-| Function | Description |
-|----------|-------------|
+| Function | Description                                 |
+| -------- | ------------------------------------------- |
 | `New()`  | Creates a new, empty, thread-safe `Policy`. |
 
 ### Policy Methods
 
-| Method | Description |
-|--------|-------------|
-| `Add(directive, sources...)` | Appends one or more sources to a directive. Automatically handles duplicates. |
-| `Set(directive, sources...)` | Replaces all sources for a directive. Removes the directive if no sources are provided. |
-| `Remove(directive)` | Removes a directive entirely from the policy. |
-| `Compile(nonce ...string)` | Generates the final, sorted CSP header string. If a nonce is passed, it replaces the `SourceNonce` placeholder. |
+| Method                       | Description                                                                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Add(directive, sources...)` | Appends one or more sources to a directive. Automatically handles duplicates.                                                                                              |
+| `Set(directive, sources...)` | Replaces all sources for a directive. Removes the directive if no sources are provided.                                                                                    |
+| `Remove(directive)`          | Removes a directive entirely from the policy.                                                                                                                              |
+| `Compile(nonce ...string)`   | Generates the final CSP header string. If a nonce is passed, it replaces the `SourceNonce` placeholder. Subsequent calls use a cached string until the policy is modified. |
 
 ### Helpers
 
-| Function | Description |
-|----------|-------------|
-| `Nonce(value)` | Returns a correctly formatted static nonce source (e.g., `'nonce-value'`). |
-| `Hash(algo, value)` | Returns a correctly formatted hash source (e.g., `'sha256-value'`). |
+| Function                 | Description                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| `Nonce(value)`           | Returns a correctly formatted static nonce source (e.g., `'nonce-value'`).         |
+| `ParseHash(algo, value)` | Validates and formats a base64 cryptographic hash source (e.g., `'sha256-value'`). |
 
-### Constants
+### Constants and Extensibility
 
-The package provides string constants for all standard directives (e.g., `csp.DefaultSrc`, `csp.ScriptSrc`) and common sources (e.g., `csp.SourceSelf`, `csp.SourceNone`, `csp.SchemeData`). Using these constants is recommended to avoid typos and ensure correctness.
+The package provides string constants for standard W3C standard directives (e.g., `csp.DefaultSrc`, `csp.ScriptSrc`) and keyword sources (e.g., `csp.SourceSelf`, `csp.SourceNone`, `csp.SchemeData`). Utilizing these constants is recommended to enforce correctness and prevent typos.
 
-## ⚡ Concurrency
+In cases where experimental or custom directives are required, raw strings may be passed directly to the `Add` and `Set` methods:
 
-The `Policy` object is thread-safe. You can safely call its methods (`Add`, `Set`, `Remove`, `Compile`) from multiple goroutines simultaneously. This makes it ideal for use in HTTP middleware or other concurrent contexts where a single policy object might be shared and modified. All access is synchronized internally with a `sync.RWMutex`.
-
-## 🧪 Testing
-
-Run tests with:
-```bash
-go test -v
+```go
+p.Add("trusted-types", "my-policy-name")
 ```
 
-Run benchmarks with:
+This ensures compatibility with evolving standards without requiring updates to the library.
+
+## Concurrency
+
+The `Policy` object is strictly thread-safe. All mutations (`Add`, `Set`, `Remove`) and reads (`Compile`, `Strict`, `Clone`) are synchronized internally via `sync.RWMutex`. It is safe to share a single `Policy` instance across an application's entire middleware stack.
+
+## Testing
+
+Run tests with race condition detection enabled:
+
+```bash
+go test -race ./...
+```
+
+Run benchmarks (includes memory allocation reporting):
+
 ```bash
 go test -bench=. -benchmem
 ```
 
-## ⚖️ License
+## License
 
 This package is open-source and available under the [MIT License](LICENSE).
