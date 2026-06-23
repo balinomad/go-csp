@@ -140,7 +140,7 @@ func CSPGinMiddleware(policy *csp.Policy) gin.HandlerFunc {
 // r.Use(CSPGinMiddleware(p))
 ```
 
-### Echo
+#### Echo
 
 Integration with Echo requires the `echo.MiddlewareFunc` signature.
 
