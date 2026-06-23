@@ -9,28 +9,123 @@ on:
   pull_request:
     branches: ["master"]
 
+# Cancel in-progress runs on the same branch when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Secure default permissions mapping: prevent privilege escalation
+permissions:
+  contents: read
+
 jobs:
-  build:
+  # Static analysis gate. Linter set and settings are defined in .golangci.yml.
+  # gosec is enabled there; this job is the binding CI enforcement point.
+  lint:
+    name: Lint Execution
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read minimum Go version from go.mod
-        id: goversion
-        run: echo "GO_VERSION=$(grep '^go ' go.mod | cut -d' ' -f2)" >> $GITHUB_ENV
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: false
 
-      - name: Build
-        run: go build -v ./...
+      - name: Execute golangci-lint
+        uses: golangci-lint/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=4m
 
-      - name: Test with coverage
-        run: go test -v -covermode=count -coverprofile=coverage.txt ./...
+  # Vulnerability scan against the Go vulnerability database.
+  # Fails the build on any reachable known CVE in the dependency graph.
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # govulncheck-action manages its own cache.
+          cache: false
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          # Pinned to v1.1.3 to prevent non-reproducible run behavior.
+          govulncheck-version: v1.3.0
+
+  # Verify the production binary cross-compiles cleanly for the deployment target.
+  # Tests run on ubuntu-latest (linux/amd64); the deployed container runs linux/arm64.
+  # Cross-compilation catches platform-specific issues before they reach the host.
+  build:
+    name: build (linux/arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cross-compile for linux/arm64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: go build -o /dev/null ./...
+
+  # CGO_ENABLED=0 enforces the project's no-CGO constraint on all platforms.
+  # Race detector: Go 1.22+ supports -race with CGO_ENABLED=0 on Linux only.
+  # macOS and Windows require CGO for -race; they run without it.
+  # -count=1 disables the test result cache so failures are never hidden.
+  test:
+    name: test (${{ matrix.os }}, Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["go.mod", "stable"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go (from go.mod)
+        if: matrix.go == 'go.mod'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Set up Go (stable)
+        if: matrix.go == 'stable'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Run tests with race detector (Linux)
+        if: runner.os == 'Linux'
+        run: go test -race -count=1 -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Run tests (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: go test -count=1 -shuffle=on ./...
 
       - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'go.mod'
         uses: codecov/codecov-action@v5
         with:
+          files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
