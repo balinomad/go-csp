@@ -116,6 +116,8 @@ jobs:
 
       - name: Run tests with race detector (Linux)
         if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: "1"
         run: go test -race -count=1 -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Run tests (macOS / Windows)
