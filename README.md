@@ -3,7 +3,6 @@
 [![Size](https://img.shields.io/github/languages/code-size/balinomad/go-csp)](https://github.com/balinomad/go-csp)
 [![License](https://img.shields.io/github/license/balinomad/go-csp)](./LICENSE)
 [![Go](https://github.com/balinomad/go-csp/actions/workflows/go.yml/badge.svg)](https://github.com/balinomad/go-csp/actions/workflows/go.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-csp)](https://goreportcard.com/report/github.com/balinomad/go-csp)
 [![codecov](https://codecov.io/github/balinomad/go-csp/graph/badge.svg?token=L1K68IIN51)](https://codecov.io/github/balinomad/go-csp)
 
 # csp
