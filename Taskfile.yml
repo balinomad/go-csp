@@ -1,0 +1,44 @@
+version: "3"
+
+# Local mirror of the GitHub Actions pipeline. Tool versions are pinned so a
+# local run matches CI. Usage: task check
+
+vars:
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GOVULNCHECK_VERSION: v1.9.0
+
+tasks:
+  lint:
+    desc: Run golangci-lint with the project configuration
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run --timeout=4m
+
+  test:
+    desc: Run tests with the race detector and shuffled order
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - mkdir -p .cover
+      - go test -race -count=1 -shuffle=on -covermode=atomic -coverprofile=.cover/coverage.out ./...
+
+  vuln:
+    desc: Scan the module for reachable known vulnerabilities
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...
+
+  build:
+    desc: Cross-compile the production target (linux/arm64, no CGO)
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: arm64
+    cmds:
+      - go build -o /dev/null ./...
+
+  check:
+    desc: Run the full local CI pipeline
+    cmds:
+      - task: lint
+      - task: test
+      - task: vuln
+      - task: build
