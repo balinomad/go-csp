@@ -1,2 +1,3 @@
 .cover/
-coverage.*
+.directory
+TODO.md

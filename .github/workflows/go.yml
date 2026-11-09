@@ -52,11 +52,10 @@ jobs:
           cache: false
 
       - name: Run govulncheck
-        uses: golang/govulncheck-action@v1
-        with:
-          go-version-file: go.mod
-          # Pinned to v1.1.3 to prevent non-reproducible run behavior.
-          govulncheck-version: v1.3.0
+        run: |
+          # Pin version to v1.1.4 for deterministic CI
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
 
   # Verify the production binary cross-compiles cleanly for the deployment target.
   # Tests run on ubuntu-latest (linux/amd64); the deployed container runs linux/arm64.
