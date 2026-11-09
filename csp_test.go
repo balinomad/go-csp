@@ -847,9 +847,8 @@ func BenchmarkPolicy_Compile(b *testing.B) {
 	nonce := "B3nh1LfcP7/T8aR4y1a+5A=="
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		_ = p.Compile(nonce)
 	}
 }
