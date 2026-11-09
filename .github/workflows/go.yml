@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
@@ -33,7 +33,7 @@ jobs:
       - name: Execute golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
           args: --timeout=4m
 
   # Vulnerability scan against the Go vulnerability database.
@@ -43,19 +43,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # govulncheck-action manages its own cache.
-          cache: false
+          cache: true
 
       - name: Run govulncheck
         run: |
-          # Pin version to v1.1.4 for deterministic CI
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          govulncheck ./...
+          # Pinned for deterministic CI. The toolchain comes from go.mod.
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   # Verify the production binary cross-compiles cleanly for the deployment target.
   # Tests run on ubuntu-latest (linux/amd64); the deployed container runs linux/arm64.
@@ -65,9 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -96,17 +94,17 @@ jobs:
         go: ["go.mod", "stable"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go (from go.mod)
         if: matrix.go == 'go.mod'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: "go.mod"
 
       - name: Set up Go (stable)
         if: matrix.go == 'stable'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "stable"
 
@@ -122,7 +120,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go == 'go.mod'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
