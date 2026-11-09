@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-11-09
+
+### Changed
+
+- Minimum supported Go version raised to 1.26.
+
 ## [1.3.0] - 2026-06-23
 
 ### Added
@@ -47,6 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release. Basic string-based CSP builder with static directive management.
 
+[Unreleased]: https://github.com/balinomad/go-csp/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/balinomad/go-csp/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/balinomad/go-csp/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/balinomad/go-csp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/balinomad/go-csp/compare/v1.0.0...v1.1.0
